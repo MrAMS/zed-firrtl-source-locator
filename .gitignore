@@ -1,0 +1,4 @@
+/target
+/server/target
+/server/bin
+.DS_Store

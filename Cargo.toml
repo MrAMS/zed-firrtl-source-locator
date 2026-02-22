@@ -1,0 +1,12 @@
+[package]
+name = "firrtl-source-locator-extension"
+version = "0.1.0"
+edition = "2021"
+authors = ["MrAMS <2421653893@qq.com>"]
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+zed_extension_api = "0.7.0"

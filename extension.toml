@@ -1,0 +1,25 @@
+id = "firrtl-source-locator"
+name = "FIRRTL Source Locator"
+description = "Jump from FIRRTL/Chisel source locator comments (@[...]) in Verilog/SystemVerilog back to Scala source."
+version = "0.1.0"
+schema_version = 1
+authors = ["MrAMS <2421653893@qq.com>"]
+
+[[capabilities]]
+kind = "process:exec"
+command = "cargo"
+args = ["--version"]
+
+[[capabilities]]
+kind = "process:exec"
+command = "cargo"
+args = ["check", "--manifest-path", "*", "--bin", "firrtl-source-locator-server"]
+
+[[capabilities]]
+kind = "process:exec"
+command = "rustc"
+args = ["--version"]
+
+[language_servers.firrtl-source-locator]
+name = "FIRRTL Source Locator"
+languages = ["Verilog", "SystemVerilog"]

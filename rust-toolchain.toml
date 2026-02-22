@@ -2,3 +2,4 @@
 channel = "stable"
 profile = "minimal"
 components = ["rustfmt"]
+targets = ["wasm32-wasip2"]

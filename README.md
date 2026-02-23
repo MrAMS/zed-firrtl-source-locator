@@ -1,5 +1,9 @@
 # firrtl-source-locator
 
+![](screenshots/p1.webp)
+
+![](screenshots/p2.webp)
+
 A Zed companion LSP extension for Verilog/SystemVerilog that parses FIRRTL/Chisel source locator comments (`@[...]`) and jumps back to Scala source locations.
 
 ## Features

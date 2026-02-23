@@ -25,9 +25,7 @@ struct Locator {
 struct ParsedToken {
     byte_start: usize,
     byte_end: usize,
-    token_text: String,
     locator: Locator,
-    used_inherited_path: bool,
     range: Range,
 }
 
@@ -62,6 +60,12 @@ impl Backend {
             source_path.parent()?.join(candidate)
         };
         Url::from_file_path(resolved).ok()
+    }
+
+    async fn read_locator_line(&self, locator: &Locator, source_uri: &Url) -> Option<String> {
+        let target_uri = self.resolve_target_url(&locator.path, source_uri)?;
+        let text = self.read_document(&target_uri).await?;
+        line_text_at(&text, locator.line).map(ToString::to_string)
     }
 
     fn collect_location_links<'a>(
@@ -222,6 +226,44 @@ impl LanguageServer for Backend {
         };
 
         let tokens = parse_tokens_from_annotation(&text, &annotation, &line_starts);
+        if offset == annotation.full_start {
+            let mut blocks = Vec::new();
+
+            for token in &tokens {
+                let source_line = self
+                    .read_locator_line(&token.locator, &uri)
+                    .await
+                    .unwrap_or_else(|| "<source line unavailable>".to_string());
+                let language = markdown_language_from_path(&token.locator.path);
+
+                for &column in &token.locator.columns {
+                    if column == 0 {
+                        continue;
+                    }
+                    let column_line = build_column_indicator_line(&source_line, &[column]);
+                    blocks.push(format!("```{language}\n{source_line}\n{column_line}\n```"));
+                }
+            }
+
+            if blocks.is_empty() {
+                return Ok(None);
+            }
+
+            let at_end = (annotation.full_start + 1).min(text.len());
+            let at_range = Range::new(
+                offset_to_position(annotation.full_start, &text, &line_starts),
+                offset_to_position(at_end, &text, &line_starts),
+            );
+
+            return Ok(Some(Hover {
+                contents: HoverContents::Markup(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value: blocks.join("\n"),
+                }),
+                range: Some(at_range),
+            }));
+        }
+
         let Some(token) = tokens
             .iter()
             .find(|token| offset >= token.byte_start && offset < token.byte_end)
@@ -229,14 +271,16 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
-        let mut value = format!(
-            "**FIRRTL Source Locator**\n\n- token: `{}`\n- expanded: `{}`",
-            token.token_text,
+        let source_line = self
+            .read_locator_line(&token.locator, &uri)
+            .await
+            .unwrap_or_else(|| "<source line unavailable>".to_string());
+        let column_line = build_column_indicator_line(&source_line, &token.locator.columns);
+        let language = markdown_language_from_path(&token.locator.path);
+        let value = format!(
+            "```{language}\n{source_line}\n{column_line}\n```\n{}",
             format_locator(&token.locator)
         );
-        if token.used_inherited_path {
-            value.push_str("\n- note: this token inherits file path from the previous entry");
-        }
 
         Ok(Some(Hover {
             contents: HoverContents::Markup(MarkupContent {
@@ -460,8 +504,6 @@ fn parse_tokens_from_annotation(
         parsed.push(ParsedToken {
             byte_start,
             byte_end,
-            token_text,
-            used_inherited_path,
             range: Range::new(
                 offset_to_position(byte_start, text, line_starts),
                 offset_to_position(byte_end, text, line_starts),
@@ -484,6 +526,59 @@ fn format_locator(locator: &Locator) -> String {
             .collect::<Vec<_>>()
             .join(",");
         format!("{}:{}:{{{columns}}}", locator.path, locator.line)
+    }
+}
+
+fn line_text_at(text: &str, one_based_line: u32) -> Option<&str> {
+    let line_index = usize::try_from(one_based_line.checked_sub(1)?).ok()?;
+    let line = text.split('\n').nth(line_index)?;
+    Some(line.strip_suffix('\r').unwrap_or(line))
+}
+
+fn build_column_indicator_line(source_line: &str, columns: &[u32]) -> String {
+    let mut indicators: Vec<char> = source_line
+        .chars()
+        .map(|ch| if ch == '\t' { '\t' } else { ' ' })
+        .collect();
+
+    let mut has_valid_column = false;
+    for &column in columns {
+        if column == 0 {
+            continue;
+        }
+        has_valid_column = true;
+        let index = (column - 1) as usize;
+        if index >= indicators.len() {
+            indicators.resize(index + 1, ' ');
+        }
+        indicators[index] = '^';
+    }
+
+    if !has_valid_column {
+        return "^".to_string();
+    }
+
+    if let Some(last) = indicators.iter().rposition(|ch| *ch == '^') {
+        indicators.truncate(last + 1);
+    }
+
+    indicators.into_iter().collect()
+}
+
+fn markdown_language_from_path(path: &str) -> &'static str {
+    let lower = path.to_ascii_lowercase();
+    if lower.ends_with(".scala") {
+        "scala"
+    } else if lower.ends_with(".fir") || lower.ends_with(".firrtl") {
+        "firrtl"
+    } else if lower.ends_with(".rs") {
+        "rust"
+    } else if lower.ends_with(".py") {
+        "python"
+    } else if lower.ends_with(".sv") || lower.ends_with(".svh") || lower.ends_with(".v") {
+        "verilog"
+    } else {
+        "text"
     }
 }
 
@@ -536,5 +631,27 @@ mod tests {
         assert_eq!(tokens[1].locator.path, "/tmp/A.scala");
         assert_eq!(tokens[2].locator.path, "/tmp/B.scala");
         assert_eq!(tokens[1].locator.columns, vec![4, 9]);
+    }
+
+    #[test]
+    fn line_text_at_supports_crlf() {
+        let text = "line1\r\nline2\r\nline3";
+        assert_eq!(line_text_at(text, 1), Some("line1"));
+        assert_eq!(line_text_at(text, 2), Some("line2"));
+        assert_eq!(line_text_at(text, 3), Some("line3"));
+        assert_eq!(line_text_at(text, 4), None);
+    }
+
+    #[test]
+    fn column_indicator_marks_all_columns() {
+        let marker = build_column_indicator_line("abcdef", &[2, 5]);
+        assert_eq!(marker, " ^  ^");
+    }
+
+    #[test]
+    fn markdown_language_from_extension() {
+        assert_eq!(markdown_language_from_path("/tmp/src/Foo.scala"), "scala");
+        assert_eq!(markdown_language_from_path("/tmp/src/foo.fir"), "firrtl");
+        assert_eq!(markdown_language_from_path("/tmp/src/foo.unknown"), "text");
     }
 }

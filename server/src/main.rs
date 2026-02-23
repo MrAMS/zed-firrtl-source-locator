@@ -226,7 +226,9 @@ impl LanguageServer for Backend {
         };
 
         let tokens = parse_tokens_from_annotation(&text, &annotation, &line_starts);
-        if offset == annotation.full_start {
+        let (summary_start, summary_end) =
+            summary_hover_byte_range(&text, &annotation, &line_starts);
+        if offset >= summary_start && offset < summary_end {
             let mut blocks = Vec::new();
 
             for token in &tokens {
@@ -235,24 +237,17 @@ impl LanguageServer for Backend {
                     .await
                     .unwrap_or_else(|| "<source line unavailable>".to_string());
                 let language = markdown_language_from_path(&token.locator.path);
-
-                for &column in &token.locator.columns {
-                    if column == 0 {
-                        continue;
-                    }
-                    let column_line = build_column_indicator_line(&source_line, &[column]);
-                    blocks.push(format!("```{language}\n{source_line}\n{column_line}\n```"));
-                }
+                let column_line = build_column_indicator_line(&source_line, &token.locator.columns);
+                blocks.push(format!("```{language}\n{source_line}\n{column_line}\n```"));
             }
 
             if blocks.is_empty() {
                 return Ok(None);
             }
 
-            let at_end = (annotation.full_start + 1).min(text.len());
-            let at_range = Range::new(
-                offset_to_position(annotation.full_start, &text, &line_starts),
-                offset_to_position(at_end, &text, &line_starts),
+            let summary_range = Range::new(
+                offset_to_position(summary_start, &text, &line_starts),
+                offset_to_position(summary_end, &text, &line_starts),
             );
 
             return Ok(Some(Hover {
@@ -260,7 +255,7 @@ impl LanguageServer for Backend {
                     kind: MarkupKind::Markdown,
                     value: blocks.join("\n"),
                 }),
-                range: Some(at_range),
+                range: Some(summary_range),
             }));
         }
 
@@ -582,6 +577,44 @@ fn markdown_language_from_path(path: &str) -> &'static str {
     }
 }
 
+fn line_start_for_offset(offset: usize, line_starts: &[usize]) -> usize {
+    let line = match line_starts.binary_search(&offset) {
+        Ok(index) => index,
+        Err(0) => 0,
+        Err(index) => index - 1,
+    };
+    line_starts[line]
+}
+
+fn summary_hover_byte_range(
+    text: &str,
+    annotation: &AnnotationSpan,
+    line_starts: &[usize],
+) -> (usize, usize) {
+    let at_start = annotation.full_start;
+    let fallback_end = (at_start + 2).min(text.len());
+    let line_start = line_start_for_offset(at_start, line_starts);
+    let bytes = text.as_bytes();
+
+    if at_start + 2 <= bytes.len() {
+        if at_start >= 3 {
+            let start = at_start - 3;
+            if start >= line_start && bytes[start..at_start + 2] == *b"// @[" {
+                return (start, at_start + 2);
+            }
+        }
+
+        if at_start >= 2 {
+            let start = at_start - 2;
+            if start >= line_start && bytes[start..at_start + 2] == *b"//@[" {
+                return (start, at_start + 2);
+            }
+        }
+    }
+
+    (at_start, fallback_end)
+}
+
 #[tokio::main]
 async fn main() {
     let stdin = tokio::io::stdin();
@@ -653,5 +686,23 @@ mod tests {
         assert_eq!(markdown_language_from_path("/tmp/src/Foo.scala"), "scala");
         assert_eq!(markdown_language_from_path("/tmp/src/foo.fir"), "firrtl");
         assert_eq!(markdown_language_from_path("/tmp/src/foo.unknown"), "text");
+    }
+
+    #[test]
+    fn summary_hover_range_expands_to_comment_prefix() {
+        let text = "wire x; // @[/tmp/A.scala:10:3]";
+        let lines = compute_line_starts(text);
+        let annotation = find_annotations(text).pop().unwrap();
+        let (start, end) = summary_hover_byte_range(text, &annotation, &lines);
+        assert_eq!(&text[start..end], "// @[");
+    }
+
+    #[test]
+    fn summary_hover_range_falls_back_to_at_block() {
+        let text = "@[/tmp/A.scala:10:3]";
+        let lines = compute_line_starts(text);
+        let annotation = find_annotations(text).pop().unwrap();
+        let (start, end) = summary_hover_byte_range(text, &annotation, &lines);
+        assert_eq!(&text[start..end], "@[");
     }
 }

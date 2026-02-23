@@ -18,8 +18,8 @@ A Zed companion LSP extension for Verilog/SystemVerilog that parses FIRRTL/Chise
     1) mapped source code line
     2) `^` column indicator line
     3) expanded locator path (`path:line:col`)
-  - On the `@` symbol of one `@[...]` block, shows a summary of all mapped targets.
-    - Each target is rendered as 2 lines (source line + `^` column indicator).
+  - On `// @[` (expanded trigger range), shows a summary of all mapped targets.
+    - Each locator entry is rendered as 2 lines (source line + `^` line; multi-column entries share one `^` line).
   - Uses fenced Markdown code blocks with language tags (`scala` / `firrtl` / `verilog` / etc.) for syntax highlighting in hover.
 
 Note: this extension intentionally prioritizes `Go to Definition` for locator blocks (instead of `DocumentLink`) so one click can always produce the multi-target picker.
@@ -88,4 +88,4 @@ cargo test --manifest-path server/Cargo.toml
 4. Open `.sv`/`.v` files and use Go to Definition on `@[...]` tokens.
 5. Hover:
    - on one token for single-target details,
-   - on `@` for all-target summary.
+   - on `// @[` for all-target summary.

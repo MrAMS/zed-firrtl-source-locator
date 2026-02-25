@@ -25,50 +25,42 @@ A Zed companion LSP extension for Verilog/SystemVerilog that parses FIRRTL/Chise
 Note: this extension intentionally prioritizes `Go to Definition` for locator blocks (instead of `DocumentLink`) so one click can always produce the multi-target picker.
 It now returns `LocationLink` targets with explicit column ranges for each mapped source point.
 
-## Build Strategy (Local Compilation Only)
+## Server Resolution Strategy (PATH + GitHub Release)
 
-This project intentionally uses **local compilation only** for the language server:
+This extension no longer builds the server on the host machine.
 
-- No prebuilt binaries in `server/bin/<triplet>/`
-- No runtime download from GitHub
-- No CI packaging dependency
+When Zed starts the language server, the extension resolves the server binary in this order:
 
-When Zed starts the language server, the extension does this:
+1. Optional override: `FIRRTL_SOURCE_LOCATOR_SERVER=/absolute/path/to/firrtl-source-locator-server[.exe]`.
+2. Search in `$PATH` via `Worktree::which("firrtl-source-locator-server")`.
+3. If not found, download a prebuilt binary archive from GitHub release tag `v<extension-version>`.
+4. Extract into the extension workdir:
+   - `firrtl-source-locator-server-v<version>-<target>/`
+5. Launch the resolved binary directly.
 
-1. Finds `cargo` and `rustc` from your worktree shell PATH.
-2. Materializes bundled server source files into `<extension-workdir>/server-src/`:
-   - `Cargo.toml`
-   - `Cargo.lock`
-   - `src/main.rs`
-   - Optional override: set `FIRRTL_SOURCE_LOCATOR_SERVER_MANIFEST` to an absolute manifest path.
-3. Verifies toolchain availability and version (`rustc >= 1.75.0`).
-4. Runs:
-   - `cargo check --manifest-path <resolved-manifest-path> --bin firrtl-source-locator-server`
-5. If successful, starts:
-   - `cargo run --manifest-path <resolved-manifest-path> --bin firrtl-source-locator-server`
+Supported release targets:
 
-To reduce cross-system drift, the repo includes `rust-toolchain.toml` (`stable`).
+- `x86_64-unknown-linux-gnu`
+- `aarch64-unknown-linux-gnu`
+- `x86_64-apple-darwin`
+- `aarch64-apple-darwin`
+- `x86_64-pc-windows-msvc`
 
 ## Error Reporting and Troubleshooting
 
-If local compilation fails, the extension reports a clear failure message via Zed language server status (including a short compiler error snippet and a suggested fix command).
+If startup fails, Zed's language server status will show the reason (missing release tag, missing asset, download error, unsupported platform, etc.).
 
 Common fixes:
 
 ```bash
-# install or update Rust toolchain
-rustup update stable
+# install your own server binary and expose it in PATH
+which firrtl-source-locator-server
 
-# verify tools are available
-cargo --version
-rustc --version
-
-# reproduce the extension build check manually
-cargo check --manifest-path server/Cargo.toml --bin firrtl-source-locator-server
+# or point the extension to a custom server binary
+export FIRRTL_SOURCE_LOCATOR_SERVER=/absolute/path/to/firrtl-source-locator-server
 ```
 
-If dependency download fails, verify your network access to `crates.io`.
-If the extension cannot write bundled source files, check filesystem permissions for the Zed extension work directory and/or set `FIRRTL_SOURCE_LOCATOR_SERVER_MANIFEST`.
+If GitHub download fails, verify network access and confirm the release tag `v<extension-version>` includes your platform asset.
 
 ## Development
 
@@ -79,6 +71,11 @@ cargo check
 # run server parser tests
 cargo test --manifest-path server/Cargo.toml
 ```
+
+GitHub workflows:
+
+- `.github/workflows/ci.yml`: extension check + server tests.
+- `.github/workflows/release-server.yml`: build and publish release assets for supported targets.
 
 ## Use in Zed
 

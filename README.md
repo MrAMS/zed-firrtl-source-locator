@@ -1,6 +1,6 @@
 # firrtl-source-locator
 
-[![PyPI version](https://img.shields.io/badge/Zed-firrtl%20source%20locator-blue)](https://zed.dev/extensions/firrtl-source-locator)
+[![Zed extensions](https://img.shields.io/badge/Zed-firrtl%20source%20locator-blue)](https://zed.dev/extensions/firrtl-source-locator)
 
 
 
